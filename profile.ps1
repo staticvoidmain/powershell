@@ -400,6 +400,9 @@ set-alias build build-solution
 set-alias recycle recycle-apppool
 set-alias lsapp list-apppool
 
+set-alias ll list-directory -Option AllScope
+set-alias ls list-directory -Option AllScope
+
 set-alias csc "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 set-alias ngen "C:\Windows\Microsoft.NET\Framework\v4.0.30319\ngen.exe"
 set-alias edit "C:\Program Files\Sublime Text 2\sublime_text.exe"

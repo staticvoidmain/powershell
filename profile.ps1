@@ -30,55 +30,6 @@ function append ([string] $line, $file) {
   Write-Output $line | out-file -Append -Encoding utf8 $file
 }
 
-function list-directory {
-  # okay, technically this only makes sense in the context of a FILE
-  if ((get-location).Provider.Name.EndsWith("FileSystem")) {
-    $extensions = $env:PATHEXT.toLower().split(';')
-
-    gci | % {
-      $c = "white" 
-      if ($_.Attributes -band "Directory") {
-        $c = "blue"
-      } else {
-        if ($extensions -contains $_.extension) {
-          $c = "green"
-        }
-      }
-
-      # todo: to truly match ll we need to swap the year for the
-      # time if it's been modified this year, but whatever.
-      $ts = $_.LastWriteTime.ToString("MMM dd yyyy")
-
-      write-host -NoNewLine $_.Mode
-      write-host -NoNewLine " "
-      write-host -NoNewLine $(__size($_))
-      write-host -NoNewLine " "
-      write-host -NoNewLine $ts
-      write-host -NoNewLine " "
-      write-host -F $c $_.Name
-    }
-  } else {
-    gci
-  }
-}
-
-<# helper for ll to display human readable sizes #>
-function __size ($f) {
-  if ($f.attributes -band "Directory") { return "   dir" }
-
-  switch ($f.length) {
-    { $_ -gt 1tb } { return "{0,4:n1} T" -f ($_ / 1tb) }
-    { $_ -gt 1gb } { return "{0,4:n1} G" -f ($_ / 1gb) }
-    { $_ -gt 1mb } { return "{0,4:n1} M" -f ($_ / 1mb) }
-    { $_ -gt 1kb } { return "{0,4:n1} K" -f ($_ / 1Kb) }
-    default { return "  {0,4:0}" -f $_ } 
-  }
-}
-
-function file ($f) {
-  (gp $f) | select *
-}
-
 function Hex-ToAscii( [string]$value ) {
     $value.Split('-') | 
         % { write-host -NoNewLine ([char]([Convert]::ToInt32($_, 16))) }
@@ -394,6 +345,77 @@ function format-color([hashtable] $colors) {
     }
 }
 
+
+function list-directory {
+  # okay, technically this only makes sense in the context of a FILE
+  if ((get-location).Provider.Name.EndsWith("FileSystem")) {
+    
+    $dir = [system.io.fileattributes]::Directory
+    $hidden = [system.io.fileattributes]::Hidden
+    $argv = [string]::Join(" ", $args)
+
+    Invoke-Expression "Get-ChildItem $argv -Force" | % {
+      $c = "white"
+      
+      if ($_.Attributes -band $hidden) {
+        $c = "darkgray"
+      }
+      elseif ($_.Attributes -band $dir) {
+        $c = "blue"
+      } else {
+        $extensions = $env:PATHEXT.toLower().split(';')
+        if ($extensions -contains $_.extension) {
+          $c = "green"
+        }
+      }
+
+      $ts = $_.LastWriteTime.ToString("MMM dd yyyy")
+      $line = $_.Mode + " "+ $(__size($_)) + " " + $ts + " "
+      # note: using ansi colors feels sluggish and
+      # it doesn't actually make piping to "more" cleaner.
+      write-host -NoNewLine $line
+
+      # TODO: if we are recursing, add the path.
+      write-host -F $c $_.Name
+    }
+  } 
+  else {
+    gci
+  }
+}
+
+<# helper for ll to display human readable sizes #>
+function __size ($f) {
+  $dir = [system.io.fileattributes]::Directory
+  if ($f.attributes -band $dir) { return "   dir" }
+
+  switch ($f.length) {
+    { $_ -gt 1tb } { return "{0,4:n1} T" -f ($_ / 1tb) }
+    { $_ -gt 1gb } { return "{0,4:n1} G" -f ($_ / 1gb) }
+    { $_ -gt 1mb } { return "{0,4:n1} M" -f ($_ / 1mb) }
+    { $_ -gt 1kb } { return "{0,4:n1} K" -f ($_ / 1Kb) }
+    default { return "  {0,4:0}" -f $_ } 
+  }
+}
+
+<# recursive delete, now with pipeline powers#>
+function rmrf {
+  [cmdletbinding()]
+  param(
+    [parameter(ValueFromPipeline)]
+    [string[]]$stdin
+  )
+
+  process {
+    foreach ($item in $stdin) {
+      Remove-Item $item -Recurse -Force -ErrorAction Ignore
+    }
+  }
+}
+
+function file ($f) {
+  (gp $f) | select *
+}
 
 ##################   ALIASES   ####################
 set-alias build build-solution

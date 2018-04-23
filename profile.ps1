@@ -291,7 +291,7 @@ function howdoi ($what) {
       
       write-host ""
       write-host "dump a query:"
-      write-host "`tbcp `"select RecoveryID from dbo.Recovery where CollectedAmount > 0 and DateReceived is null`" queryout recovery-ids -S AG_AP01 -d DealerRecovery -T -w"
+      write-host "`tbcp `"select * from dbo.tableName`" queryout file-name -S serverName -d dbname -T -w"
       
       write-host ""
       write-host "ingest data"

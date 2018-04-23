@@ -1,350 +1,134 @@
-﻿
-write-host Initializing...
-
-# the default is to write error and continue execution.
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 set-strictmode -Version Latest
 
-$env:DEFAULT_TEXT_EDITOR = "C:\Program Files\Sublime Text 2\sublime_text.exe";
+function prompt {
+    $loc = ($pwd).Path.Replace("Microsoft.PowerShell.Core/FileSystem::", "").Replace("$HOME", "~").Replace("\", "/")
 
-# sequence helpers.
-$seq = [System.Linq.Enumerable]
-
-### fixup module path ###
-$modulePath = "C:\Program Files (x86)\PowerShell Community Extensions\Pscx3\;"
-if (-not $env:PSModulePath.Contains($modulePath)) {
-    $env:PSModulePath = $modulePath + $env:PSModulePath
-}
-
-$env:Path += ";c:\dev\tools;c:\dbg32;C:\Program Files (x86)\Windows Installer XML v3.5\bin;";
-
-#### import powershell community extensions ####
-Import-Module Pscx
-
-function bye {
-  shutdown -s -t 0 -f
-}
-
-function append ([string] $line, $file) {
-  # TODO: okay actually this should open the file, detect encoding, then appendline.
-  Write-Output $line | out-file -Append -Encoding utf8 $file
-}
-
-function Hex-ToAscii( [string]$value ) {
-    $value.Split('-') | 
-        % { write-host -NoNewLine ([char]([Convert]::ToInt32($_, 16))) }
+    write-host "$env:UserName@$env:ComputerName " -NoNewLine -ForegroundColor DarkGreen
+    write-host $loc -ForegroundColor DarkYellow
     
-    write-host "`r`n"
+    # just to keep things from going weird.
+    [Console]::ForegroundColor = [System.ConsoleColor]::White;
+
+    return "$ "
 }
 
-function new-guid {
-    [guid]::NewGuid();
+# IMPORTS
+. c:\dev2\scripts\tf-helpers.ps1
+
+# Chocolatey profile
+$ChocolateyProfile = "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"
+if (Test-Path($ChocolateyProfile)) {
+  Import-Module "$ChocolateyProfile"
 }
 
-########### PERFORMANCE PROFILING #######
-function get-assemblies([string] $path, [regex] $expr) {
-    # if you havin' regex problems I feel bad for you son
-    # I got \d+ problems and matching text ain't one.
-    dir $path | where { $expr.IsMatch($_.Name) } | select Name
+$env:EDITOR = "sublime_text.exe";
+
+$env:PATH += ";" # symetry
+$env:PATH += "c:\program files\sublime text 3\;"
+$env:PATH += "c:\tools;"
+$env:PATH += "C:\Program Files\Java\jre1.8.0_131\bin;"
+$env:PATH += "c:\windows\system32\inetsrv;"
+$env:PATH += "c:\program files (x86)\msbuild\14.0\bin\;"
+$env:PATH += "C:\Program Files (x86)\Microsoft Visual Studio 14.0\vc\bin;"
+$env:PATH += "C:\Program Files (x86)\Microsoft Visual Studio\2017\Enterprise\Common7\IDE\CommonExtensions\Microsoft\TeamFoundation\Team Explorer;"
+$env:PATH += "C:\Program Files (x86)\Windows Kits\8.0\Debuggers\x64;"
+$env:PATH += "C:\Program Files (x86)\Windows Kits\8.1\bin\x86;"
+$env:PATH += "C:\Program Files (x86)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.7 Tools;"
+$env:PATH += "C:\Program Files (x86)\WinMerge;"
+$env:PATH += "C:\tools\fd;"
+$env:PATH += "C:\windows\microsoft.net\framework64\v4.0.30319;";
+
+$env:JAVA_HOME = "C:\Program Files\Java\jre1.8.0_131"
+
+# everyone should get their own API key.
+$env:OCTODEPLOY_API_KEY = "API-UVNEV5RMWZYTHEKCAPG9UZFHO"
+
+# command default value extensions.
+# interestingly, powershell defines += as merge(dict, dict)
+$PSDefaultParameterValues += @{
+  'Measure-Object:Average' = $true;
+  'Measure-Object:Sum' = $true;
+  'Measure-Object:Maximum' = $true;
+  'ConvertTo-Csv:NoTypeInformation' = $true;
+  'ConvertTo-Json:NoTypeInformation' = $true;
+  'Invoke-WebRequest:UseBasicParsing' = $true;
+  'Invoke-WebRequest:UseDefaultCredentials' = $true;
+  'Invoke-RestRequest:UseDefaultCredentials' = $true;
+  'Out-File:Encoding' = 'utf8';
+  'Get-History:Count' = 25;
 }
- 
-function instrument-binaries ([string] $basePath, $assemblies) {
-    $profilerPath = "C:\Program Files (x86)\Microsoft Visual Studio 10.0\Team Tools\Performance Tools"
- 
-    if (-not ($env:Path.Contains($profilerPath))) {
-        write-host "appending vs_profiler path to Path environment variable."
-        $env:Path += (";" + $profilerPath);
+
+$PSMailServer = "10.20.11.211"
+
+function edit {
+  [cmdletbinding()]
+  param(
+    [parameter(ValueFromPipeline)]
+    [string[]]$files
+  )
+
+  process {
+    foreach ($file in $files) {
+      & $env:EDITOR $file
     }
- 
-    push-location $basePath
- 
-    if (-not (test-path ( where.exe VsInstr.exe ))) {
-        write-host "VsInstr.exe is not installed!"
-    } else {
-        $flag = "is a delay-signed or test-signed assembly"
- 
-        foreach ($instr in $assemblies) {
-            $path = [System.IO.Path]::Combine($basePath, $instr);
- 
-            VsInstr.exe $path /ExcludeSmallFuncs
- 
-            $output = (sn.exe -v $path)
-            $resign = (($output -match $flag).Count -gt 0)
-                 
-            if ($resign) {
-                write-host $instr needs to be resigned...
-                # assuming your keyfile is in the project root.
-                # adjust accordingly
-                sn.exe -Ra "$path" ..\..\your-keyfile-here.snk
-            }
-        }
-    }
- 
-    pop-location
+  }
 }
 
-function begin-profiling ( [string] $session, [string] $report_path ) {
-    if (-not (test-path $report_path )) {
-        mkdir "$report_path"| out-null
-    }
- 
-    $env:_NT_SYMBOL_PATH = "srv*C:\mssymbols*http://msdl.microsoft.com/downloads/symbols"
-    $profilerPath = "C:\Program Files (x86)\Microsoft Visual Studio 10.0\Team Tools\Performance Tools"
- 
-    if (-not ($env:Path.Contains($profilerPath))) {
-        $env:Path += (";" + $profilerPath);
-    }
- 
-    # make sure the profiler isn't already running.
-    VsPerfCmd.exe /Status
- 
-    if ($LastExitCode -ne 0) {
-        $name = $session + [DateTime]::Now.ToString("MM-dd-yyyy-hh-mm")
-        $report = $report_path + $name + ".vsp"
- 
-        VsPerfCmd.exe /user:Everyone /start:Trace /output:$report /CrossSession
- 
-        write-host "Profiling report will be stored in:" $report
-    } else {
-        write-host "Profiler already running. New session will not be started."
-    }
+function ConvertTo-HexString($bytes) {
+    return [string]::Join("", `
+      ($bytes | %{ $_.ToString("x2").ToLower() }))
 }
 
-function end-profiling {
-    VsPerfCmd.exe /GlobalOff
-    VsPerfCmd /Shutdown
-    VsPerfClrEnv /off
- 
-    write-host "Profilers detached."
+function clean-solution ($sln, [switch] $release) {
+    $config = if ($release) { "Release" } else {"Debug"}
+
+    msbuild $sln /t:Clean /v:m /nr:true /p:Configuration=$config /m /nologo
 }
 
-#############################################################################################################
-############################################### BUILD HELPERS ###############################################
-#############################################################################################################
+function build-solution ($sln, [switch] $release, [switch] $verbose) {
+    nuget restore $sln
+    $v = if ($verbose) { "v" } else { "m" }
 
-<#
-    .SYNOPSIS 
-        build helper with some default settings for my most common build args.
-
-    .DESCRIPTION 
-        rebuilds the specified solution passing the given arguments
-
-    .PARAMETER solution 
-        the path to the solution file
-
-    .PARAMETER config 
-        the build configuration
-
-    .PARAMETER referencePaths 
-        paths to include when building the solution.
-#>
-function build-solution ([string]$solution, [string]$config="Release", [string[]]$referencePaths = $null) {
-    $start = get-date
-    $targets = " /t:Build "
-    $params = " /p:Configuration=$config "
-
-    if ($referencePaths) {
-        foreach ($path in $referencePaths) {
-            $resolved = resolve-path $path
-            $params += " /p:ReferencePath=$resolved " 
-        }
-    }
-
-    $cmd = "msbuild $solution $targets $params /m /clp:Verbosity=minimal /flp:Summary /flp:Verbosity=detailed /nologo /nr:true /clp:Summary"
-    
-    write-host "invoking: $cmd"
-
-    iex $cmd
-
-    $elapsed = (get-date) - $start
-    write-host "Elapsed time: $elapsed"
-}
-
-function clean-solution ([string]$solution, [string]$config="Release") {
-    & msbuild $solution /t:Clean /p:Configuration=$config /m /v:d /nologo
-}
-
-<# loads up some xml instead of using the [xml] helpers which read line-by-line. #>
-function load-xml () {
-    Param([Parameter(Mandatory = $true)] [string]$relativePath)
-        
-    $path = resolve-path $relativePath
-    [xml] $root = new-object xml
-
-    $root.load($path);
-
-    return $root;
-}
-
-<# #>
-function search-configs($search) {
-    (dir . -filter *.config -Recurse) | 
-        % { 
-            $matches = gc $_.FullName | select-string -Pattern $search;
-
-            if ($matches) {
-                $obj = new-object PSObject;
-                $obj | add-member Noteproperty File $_.FullName;
-                $obj | add-member Noteproperty Matches $matches;
-
-                $obj
-            }
-        } | format-list *
-}
-
-<#
-    .SYNOPSIS
-        Helpful cmdlet for recycling app pools.
-
-    .DESCRIPTION 
-        Recycles an app pool, either on the local machine or on a remote server through PSExec (requires SysInternals tools)
-
-        When recycling on a remote system, the command will display an error if psexec.exe is not found on the system path.
-
-    .PARAMETER poolName
-        Specifies the name of the pool to recycle.
-
-    .PARAMETER server
-        Indicates that the app pool to recycle resides on another server.
-
-    .PARAMETER iis6
-        Indicates that this server is running IIS6. (default = false)
-#>
-function recycle-apppool {
-    Param(
-        [Parameter(Mandatory = $true)] [string]$poolName, 
-        [Parameter(Mandatory = $false)] [string]$server, 
-        [Parameter(Mandatory = $false)] [switch]$iis6
-    )
-
-    $cmd = "c:\windows\system32\inetsrv\appcmd.exe recycle apppool /apppool.name:$poolName";
-    
-    if ($iis6) {
-        $cmd = "cscript.exe iisapp.vbs /a $poolName /r"
-    }
-
-    if ($server) {
-
-        $path = (where.exe psexec.exe)
-
-        if (-not $path) {
-            write-error "PSExec.exe not found on the path. This is required to use this function."
-            return;
-        }
-
-        $cmd = "psexec.exe \\$server " + $cmd;
-    }
-
-    Invoke-Expression $cmd;
-}
-
-<#
-    .SYNOPSIS
-        Helpful cmdlet for listing app pools.
-
-    .DESCRIPTION 
-        Lists all AppPools, either on the local machine or on a remote server through PSExec (requires SysInternals tools)
-
-        When listing app pools on a remote system, the command will display an error if psexec.exe is not found on the system path.
-
-    .PARAMETER server
-        Specifies the remote server to connect to (default = $env:ComputerName)
-
-    .PARAMETER iis6
-        Indicates that this server is running IIS6. (default = false)
-#>
-function list-apppool {
-    Param(
-        [Parameter(Mandatory = $false)] [string]$server, 
-        [Parameter(Mandatory = $false)] [switch]$iis6
-    )
-
-    if ($iis6) {
-        if (-not $server) {
-            $server = $env:ComputerName;
-        }
-
-        $map = @{ 
-            1 = "starting"; 
-            2 = "started"; 
-            3 = "stopping"; 
-            4 = "stopped"
-        };
-
-        $pools = [ADSI]"IIS://$server/W3SVC/AppPools";
-        $pools | 
-            % { $_.children } | 
-                select Name, @{Name="State";Expression={$map[$_.AppPoolState.Value]}}
-
-    } else {
-        $cmd = "c:\windows\system32\inetsrv\appcmd.exe list apppool";
-        
-        if ($server) {
-            $path = (where.exe psexec.exe)
-            if (-not $path) {
-                write-error "PSExec.exe not found on the path. This is required to use this function."
-                return;
-            }
-            $cmd = "psexec.exe \\$server " + $cmd;
-        }
-
-        Invoke-Expression $cmd
-    }
-}
-
-function display-date ([datetime] $date) {
-    $format = "MM/dd/yyyy HH:mm:ss"
-
-    if ($date -ne [DateTime]::MinValue) {
-        return $date.ToString($format)
+    if ($release) {
+      msbuild $sln /t:Build /v:$v /nr:true /m /p:Configuration=Release /nologo
+      return;
     }
     
-    return ""
+    msbuild $sln /t:Build /v:$v /nr:true /m /p:RunCodeAnalysis=false /p:CodeAnalysisRuleSet='' /p:Configuration=Debug /nologo
 }
 
-function wget-async ([string] $url) { 
-    $client = new-object Net.WebClient; 
-    $client.Proxy = $null;
+<# unified diff #>
+function udiff($left, $right) { git diff --no-index -w --ignore-blank-lines $left $right }
 
-    $name = [system.io.path]::GetFileName($url); 
-    $path = [system.io.path]::combine($pwd.Path, $name)
+# symlink stuff, could also just delete the directory.
+# using powershell.
+function mklink { cmd /c mklink $args }
 
-    try {
-        $complete = [guid]::newguid();
+function rmlink { cmd /c rmlink $args }
 
-        Register-ObjectEvent $client DownloadProgressChanged -action {
-            $status = "{0} of {1}" -f $eventargs.BytesReceived, $eventargs.TotalBytesToReceive;
+function disk-usage ($p) { du64.exe $p }
 
-            Write-Progress -Activity "Downloading" -Status $status -PercentComplete $eventargs.ProgressPercentage;
-        } | out-null
+function rel-path {
+  [cmdletbinding()]
+  param(
+    [parameter(ValueFromPipeline)]
+    [string[]]$stdin
+  )
+  begin { 
+    $d = $pwd.toString().Replace("Microsoft.PowerShell.Core\FileSystem::", "")
+    $len = $d.length;
 
-        Register-ObjectEvent $client DownloadFileCompleted -SourceIdentifier $complete | out-null
-
-        $client.DownloadFileAsync($url, $path)
-        Wait-Event -SourceIdentifier $complete | out-null
-    } finally { 
-        $client.dispose();
+    if (-not($d.EndsWith("\"))) {
+      $len++;
     }
-}
-
-function format-color([hashtable] $colors) {
-    $lines = ($input | Out-String) -replace "`r", "" -split "`n"
-    foreach ($line in $lines) {
-        $color = ''
-        foreach ($pattern in $colors.Keys) {
-            if ($line -match $pattern) { 
-                $color = $colors[$pattern] 
-            }
-        }
-
-        if ($color) {
-            Write-Host -ForegroundColor $color $line
-        } else {
-            Write-Host $line
-        }
+  }
+  process {
+    foreach ($p in $stdin) {
+      $p.substring($len).replace("\", "/");
     }
+  }
 }
-
 
 function list-directory {
   # okay, technically this only makes sense in the context of a FILE
@@ -352,6 +136,7 @@ function list-directory {
     
     $dir = [system.io.fileattributes]::Directory
     $hidden = [system.io.fileattributes]::Hidden
+    $symlink = [system.io.fileattributes]::ReparsePoint
     $argv = [string]::Join(" ", $args)
 
     Invoke-Expression "Get-ChildItem $argv -Force" | % {
@@ -359,6 +144,9 @@ function list-directory {
       
       if ($_.Attributes -band $hidden) {
         $c = "darkgray"
+      }
+      elseif ($_.Attributes -band $symlink) {
+        $c = "cyan"
       }
       elseif ($_.Attributes -band $dir) {
         $c = "blue"
@@ -371,12 +159,11 @@ function list-directory {
 
       $ts = $_.LastWriteTime.ToString("MMM dd yyyy")
       $line = $_.Mode + " "+ $(__size($_)) + " " + $ts + " "
-      # note: using ansi colors feels sluggish and
-      # it doesn't actually make piping to "more" cleaner.
-      write-host -NoNewLine $line
 
-      # TODO: if we are recursing, add the path.
-      write-host -F $c $_.Name
+      write-host -NoNewLine $line
+      $name = rel-path $_.FullName;
+
+      write-host -F $c $name
     }
   } 
   else {
@@ -384,7 +171,7 @@ function list-directory {
   }
 }
 
-<# helper for ll to display human readable sizes #>
+<# helper for ls to display human readable sizes #>
 function __size ($f) {
   $dir = [system.io.fileattributes]::Directory
   if ($f.attributes -band $dir) { return "   dir" }
@@ -398,7 +185,6 @@ function __size ($f) {
   }
 }
 
-<# recursive delete, now with pipeline powers#>
 function rmrf {
   [cmdletbinding()]
   param(
@@ -417,16 +203,363 @@ function file ($f) {
   (gp $f) | select *
 }
 
-##################   ALIASES   ####################
-set-alias build build-solution
-set-alias recycle recycle-apppool
-set-alias lsapp list-apppool
+function fe ($search) {
 
-set-alias ll list-directory -Option AllScope
+  if ($search) {
+    fd --type f | fzf -q "$search" | edit
+    return;
+  }
+
+  fd --type f | fzf | edit
+}
+
+function cdf ($search) {
+  if ($search) {
+    fd --type d | fzf -q "$search"| cd
+    return;
+  }
+
+  fd --type d | fzf | cd
+}
+
+function ansi ($color, $text) {
+    $c = [char]0x001b # the magic escape
+
+    switch ($color.toLower()) {
+      "red"     { return "${c}[31m${text}${c}[39m"; }
+      "green"   { return "${c}[92m${text}${c}[39m"; }
+      "magenta" { return "${c}[35m${text}${c}[39m"; }
+      "cyan"    { return "${c}[94m${text}${c}[39m"; }
+      "purple"  { return "${c}[35m${text}${c}[39m"; }
+      default   { return "${text}"; }
+    }
+}
+
+function watch-mem {
+  param($p)
+
+  $prev = (get-process -id $p).PrivateMemorySize;
+  while ($true) {
+    
+    $curr = (get-process -id $p).PrivateMemorySize;
+    $ts = [datetime]::now.toString("HH:mm:ss,fff")
+
+    $diff = $curr - $prev;
+    $delta = if ($diff -ge 0) { "+" + $diff.ToString() } else { $diff.ToString() }
+
+    switch ($curr) {
+      { $_ -gt 1tb } { $line = ("{0,4:n1} T" -f ($_ / 1tb))}
+      { $_ -gt 1gb } { $line = ("{0,4:n1} G" -f ($_ / 1gb)) }
+      { $_ -gt 1mb } { $line = ("{0,4:n1} M" -f ($_ / 1mb)) }
+      { $_ -gt 1kb } { $line = ("{0,4:n1} K" -f ($_ / 1Kb)) }
+      default { $line = "  {0,4:0} B" -f $_ } 
+    }
+
+    $prev = $curr;
+    write-host "$ts  $line ( $delta )"
+    sleep -Seconds 3;
+  }
+}
+
+function exec-sql ($srv, $db, $s) {
+
+    $ts = [datetime]::now.toString("HH:mm:ss,fff")
+    $file = (resolve-path $s).Path
+
+    write-host -F green "$ts  $file on $db"
+    sqlcmd -b -S $srv -d $db -i $file | % {
+        $ts = [datetime]::now.toString("HH:mm:ss,fff")
+        "$ts  $_"
+    };
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Error running $s"
+    }
+}
+
+function howdoi ($what) {
+  switch($what) {
+    "even" { "If you just can't even... maybe go for a walk." }
+    "bcp" {
+      write-host "export a table:"
+      write-host ""
+      write-host "`tbcp <table> out <file-name> -S <server> -d <database> -T -w"
+      
+      write-host ""
+      write-host "dump a format:"
+      write-host "`tbcp tableName format nul -c -t '|' -r '\n' -f formatName.fmt -S serverName -d databaseName -T"
+      
+      write-host ""
+      write-host "dump a query:"
+      write-host "`tbcp `"select RecoveryID from dbo.Recovery where CollectedAmount > 0 and DateReceived is null`" queryout recovery-ids -S AG_AP01 -d DealerRecovery -T -w"
+      
+      write-host ""
+      write-host "ingest data"
+      write-host "`tbcp <tableName> in <file> -S <server> -d <db> -w -T"
+    }
+  }
+}
+
+function indent-xml ($x) {
+  $doc = [xml] $x;
+  
+  try {
+    $writer = new-object -TypeName "System.Xml.XmlTextWriter" ([System.Console]::Out)
+  
+    $doc.WriteContentTo($writer);
+  }
+  finally {
+    $writer.Dispose();
+  }
+}
+
+function get-windows-auth () {
+    $user = $env:UserDomain + "\" + $env:UserName
+    
+    $local_windows_auth_credential = Get-Variable windows_auth_credential -ErrorAction Ignore
+
+    if (-not($local_windows_auth_credential)) {
+       $local_windows_auth_credential = get-credential -UserName $user -Message "Get windows auth token:"
+
+       set-variable -Scope Global -Value $local_windows_auth_credential -Name windows_auth_credential
+    }
+
+    $local_windows_auth_credential
+}
+
+<# 
+  .description poor-man's word-count implementation
+  .outputs line_count{TAB}word_count{TAB}char_count
+  .parameter chars output the char count only.
+#>
+function wc {
+  [cmdletbinding()]
+  param(
+    [parameter(ValueFromPipeline)]
+    [string[]]$stdin,
+
+    [alias("m")][switch]$chars,
+    [alias("l")][switch]$lines,
+    [alias("w")][switch]$words
+  )
+
+  begin { 
+    $line_count = 0;
+    $word_count = 0;
+    $char_count = 0;
+    $flags = $chars -or $lines -or $words
+  }
+  
+  process {
+    foreach ($l in $stdin) {
+      $line_count++;
+
+      for ($i = 0; $i -lt $l.length; $i++) {
+        if ($l[$i] -ne ' ' -and ($i-1 -eq -1 -or $l[$i-1] -eq ' ')) {
+          $word_count++;
+        }
+      }
+
+      $char_count += $l.length;
+    }
+  }
+
+  end {
+    if (-not($flags)) {
+      write-host "$line_count`t$word_count`t$char_count"
+    }
+    else {
+      $parts = @()
+      if ($lines) {
+        $parts += $line_count
+      }
+
+      if ($words) {
+        $parts += $word_count;
+      }
+
+      if ($chars) {
+        $parts += $char_count;
+      }
+
+      write-host 
+    }
+  }
+}
+
+function download-file {
+  [cmdletbinding()]
+  param(
+    [parameter(ValueFromPipeline)]
+    [string[]] $urls
+  )
+
+  begin {
+    $client = new-object -TypeName system.net.webclient
+    $base = [string] $pwd.Path
+  }
+
+  process {
+    $name = [system.io.path]::GetFileName($_);
+    $complete = [guid]::newguid();
+
+    Register-ObjectEvent $client DownloadProgressChanged -action {
+        $status = "{0} of {1}" -f $eventargs.BytesReceived, $eventargs.TotalBytesToReceive;
+
+        Write-Progress -Activity "Downloading $name" -Status $status -PercentComplete $eventargs.ProgressPercentage;
+    } | out-null
+
+    Register-ObjectEvent $client DownloadFileCompleted -SourceIdentifier $complete | out-null
+
+    $client.DownloadFileAsync($url, $path)
+    Wait-Event -SourceIdentifier $complete | out-null
+
+    $path
+  }
+
+  end {
+    $client.Dispose()
+  }
+}
+
+function tls-fix () {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+}
+
+function get-locationstack {
+  get-location -stack
+}
+
+function tail ($file) {
+  gc $file -Last 10 -Wait
+}
+
+# todo: delay each pulse?
+# or just initially?
+function delay {
+  [cmdletbinding()]
+  param(
+
+    [int] $seconds = 0,
+
+    [parameter(ValueFromPipeline)]
+    [object[]] $pipe
+  )
+
+  begin { sleep -seconds $seconds }
+  
+  process {
+    foreach ($val in $pipe) {
+      $val
+    }
+  }
+}
+
+# schedule something to happen on a set interval.
+function interval ($timeout = 10, [scriptblock] $block) {
+  while ($true) {
+    sleep -seconds $timeout
+    $block.Invoke();
+  }
+}
+
+# poor man's grep / xargs
+function match {
+  [cmdletbinding()]
+  param(
+    [string] $pattern,
+
+    [parameter(ValueFromPipeline)]
+    [string[]]$lines
+  )
+
+  begin {
+    # todo: maybe validate the file extensions or something
+    # since 7z seems to care.
+    $re = [regex]::new($pattern, 'Compiled,IgnoreCase');
+  }
+
+  process {
+    $m = $re.Match($_);
+    
+    if ($m.Success) {
+      if ($m.Groups.Length -gt 1) {
+        $len = $m.Groups.Count
+        $m.Groups[1..($len-1)].Value -join "`t"
+      }
+    }
+  }
+}
+
+function unzip($f) {
+  7z.exe x $f
+}
+
+function zip {
+  [cmdletbinding()]
+  param(
+    [string] $archive,
+
+    [parameter(ValueFromPipeline)]
+    [string[]]$files
+  )
+
+  begin {
+    # todo: maybe validate the file extensions or something
+    # since 7z seems to care.
+    $file_list = "";
+  }
+
+  process {
+    foreach ($f in $files) {
+
+      $file_list += "`"$f`" ";
+    }
+  }
+
+  end {
+    $cmd = "7z.exe a -y -mmt $archive $file_list"
+    Write-Host $cmd
+    Invoke-Expression $cmd
+  }
+}
+
+# go ALLL the way back.
+function go-back($n = 1) {
+  while ($n-- -gt 0) { 
+    try { popd; }
+    catch {} 
+  }
+}
+
+set-alias locate "where.exe"
+set-alias cd Push-Location -Option AllScope
 set-alias ls list-directory -Option AllScope
+set-alias wget download-file -Option AllScope
 
-set-alias csc "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-set-alias ngen "C:\Windows\Microsoft.NET\Framework\v4.0.30319\ngen.exe"
-set-alias edit "C:\Program Files\Sublime Text 2\sublime_text.exe"
-set-alias msbuild "C:\Windows\Microsoft.Net\Framework\v4.0.30319\MSBuild.exe"
-set-alias vstest "C:\Program Files (x86)\Microsoft Visual Studio 11.0\Common7\IDE\CommonExtensions\Microsoft\TestWindow\vstest.console.exe"
+set-alias curl "C:\ProgramData\chocolatey\bin\curl.exe" -Option AllScope
+
+set-alias hist get-history
+set-alias gls get-locationstack
+set-alias b go-back
+set-alias du disk-usage
+set-alias tg tf-get
+set-alias ts tf-stat
+set-alias td tf-diff
+set-alias th tf-hist
+set-alias commit tf-commit
+set-alias checkin tf-commit
+set-alias clean clean-solution
+set-alias build build-solution
+set-alias watch watch-solution
+set-alias edmgen "C:/Windows/Microsoft.NET/Framework64/v4.0.30319/EdmGen.exe"
+set-alias nunit "c:/tools/nunit/nunit-console/nunit3-console.exe"
+set-alias ih Invoke-History
+set-alias ngen "C:/Windows/Microsoft.NET/Framework64/v4.0.30319/ngen.exe"
+set-alias ngen32 "C:/Windows/Microsoft.NET/Framework/v4.0.30319/ngen.exe"
+set-alias sqlcmd "C:\Program Files\Microsoft SQL Server\110\Tools\Binn\sqlcmd.exe"
+set-alias vstest "C:\Program Files (x86)\Microsoft Visual Studio 14.0\Common7\IDE\CommonExtensions\Microsoft\TestWindow\vstest.console.exe"
+set-alias bcp "C:\Program Files\Microsoft SQL Server\110\Tools\Binn\bcp.exe"
+set-alias vs2017 "C:\Program Files (x86)\Microsoft Visual Studio\2017\Enterprise\Common7\IDE\devenv.exe"
+
+cd c:\dev2

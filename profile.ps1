@@ -41,9 +41,6 @@ $env:PATH += "C:\windows\microsoft.net\framework64\v4.0.30319;";
 
 $env:JAVA_HOME = "C:\Program Files\Java\jre1.8.0_131"
 
-# everyone should get their own API key.
-$env:OCTODEPLOY_API_KEY = "API-UVNEV5RMWZYTHEKCAPG9UZFHO"
-
 # command default value extensions.
 # interestingly, powershell defines += as merge(dict, dict)
 $PSDefaultParameterValues += @{
